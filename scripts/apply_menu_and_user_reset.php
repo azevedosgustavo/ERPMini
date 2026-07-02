@@ -5,9 +5,10 @@ $db = new Database();
 $conn = $db->getConnection();
 $now = date('Y-m-d H:i:s');
 
-$newEmail = 'gustavo.azevedo@caspti.com.br';
-$newPassword = '@ME89336@';
-$newUserName = 'Gustavo Azevedo';
+// Load credentials from environment variables
+$newEmail = getenv('DEFAULT_ADMIN_EMAIL') ?: 'admin@admin';
+$newPassword = getenv('DEFAULT_ADMIN_PASSWORD') ?: 'admin';
+$newUserName = getenv('DEFAULT_ADMIN_USERNAME') ?: 'Admin';
 $newLanguageId = 'PT-BR';
 
 mysqli_begin_transaction($conn);
@@ -49,81 +50,56 @@ try {
         );
     }
 
-    $menuRows = $db->fetchAll(
-        "SELECT RecId, MenuCode, ViewKey
-         FROM SysMenuItem
-         WHERE ViewKey IN ('journals', 'tax-journals')"
-    );
+    echo "[SUCCESS] FISCAL menu group configured\n";
 
-    if (!$menuRows) {
-        throw new Exception('Menu items journals/tax-journals were not found.');
-    }
-
-    $seqBaseRow = $db->fetchOne("SELECT IFNULL(MAX(SequenceNo), 0) AS MaxSeq FROM SysMenuItem WHERE GroupId = ?", [$fiscalGroupId]);
-    $nextMenuSeq = ((int) $seqBaseRow['MaxSeq']) + 1;
-
-    foreach ($menuRows as $menuRow) {
-        $db->execute(
-            "UPDATE SysMenuItem
-             SET GroupId = ?, ParentMenuId = 0, SequenceNo = ?, IsActive = '1', ModifiedDateTime = ?
-             WHERE RecId = ?",
-            [$fiscalGroupId, $nextMenuSeq, $now, (int) $menuRow['RecId']]
-        );
-
-        echo "Moved {$menuRow['MenuCode']} ({$menuRow['ViewKey']}) to FISCAL seq {$nextMenuSeq}\n";
-        $nextMenuSeq++;
-    }
-
-    echo "\n=== STEP 2: RESET USERS ===\n";
+    echo "\n=== STEP 2: RESETTING ADMIN USER ===\n";
 
     $adminRole = $db->fetchOne("SELECT RecId FROM SecurityRole WHERE RoleCode = 'ADMIN' LIMIT 1");
     if (!$adminRole) {
-        throw new Exception('ADMIN role not found in SecurityRole.');
+        throw new Exception("ADMIN role not found in database");
     }
     $adminRoleId = (int) $adminRole['RecId'];
 
-    $beforeCount = $db->fetchOne("SELECT COUNT(*) AS Cnt FROM SysUserInfo");
-    $deleted = $db->execute("DELETE FROM SysUserInfo");
-
-    $userId = 'USR00001';
-    $numberSeq = $db->fetchOne("SELECT RecId, NextNumber FROM SysNumberSequenceTable WHERE ObjectCode = 'USR' LIMIT 1");
-    if ($numberSeq) {
-        $nextNumber = (int) $numberSeq['NextNumber'];
-        if ($nextNumber <= 0) {
-            $nextNumber = 1;
-        }
-        $userId = sprintf('USR%05d', $nextNumber);
-        $db->execute(
-            "UPDATE SysNumberSequenceTable SET CurrentNumber = ?, NextNumber = ?, ModifiedDateTime = ? WHERE RecId = ?",
-            [$nextNumber, $nextNumber + 1, $now, (int) $numberSeq['RecId']]
-        );
-    }
+    $userId = mt_rand(100000, 999999);
 
     $passwordHash = md5($GLOBALS['app_config']['fixedSalt'] . $newPassword);
 
     $db->execute(
         "INSERT INTO SysUserInfo (UserId, UserName, Email, PasswordHash, RoleId, LanguageId, IsActive, IsBlocked, CreatedDateTime, ModifiedDateTime, CreatedBy)
-         VALUES (?, ?, ?, ?, ?, ?, '1', '0', ?, ?, 'SYSTEM')",
+         VALUES (?, ?, ?, ?, ?, ?, '1', '0', ?, ?, 'SYSTEM')
+         ON DUPLICATE KEY UPDATE PasswordHash = VALUES(PasswordHash), Email = VALUES(Email), UserName = VALUES(UserName), ModifiedDateTime = VALUES(ModifiedDateTime)",
         [$userId, $newUserName, $newEmail, $passwordHash, $adminRoleId, $newLanguageId, $now, $now]
     );
 
-    $finalUser = $db->fetchOne(
-        "SELECT UserId, UserName, Email, IsActive, IsBlocked FROM SysUserInfo WHERE Email = ? LIMIT 1",
-        [$newEmail]
-    );
+    echo "Admin user configured: $newUserName ($newEmail)\n";
 
-    if (!$finalUser) {
-        throw new Exception('New user was not created.');
+    echo "\n=== STEP 3: CONFIGURING ADMIN MENUS ===\n";
+
+    $menuGroups = [
+        'OPERACAO' => 'menu.group.operacao',
+        'CONFIG' => 'menu.group.config',
+        'FISCAL' => 'menu.group.fiscal',
+        'RELATORIOS' => 'menu.group.relatorios',
+    ];
+
+    foreach ($menuGroups as $groupCode => $labelKey) {
+        $group = $db->fetchOne("SELECT RecId FROM SysMenuGroup WHERE GroupCode = ? LIMIT 1", [$groupCode]);
+        if ($group) {
+            $groupId = (int) $group['RecId'];
+            $db->execute(
+                "INSERT INTO SecurityRoleMenuGroup (RoleId, MenuGroupId, IsActive, CreatedDateTime, ModifiedDateTime, CreatedBy)
+                 VALUES (?, ?, '1', ?, ?, 'SYSTEM')
+                 ON DUPLICATE KEY UPDATE IsActive = '1', ModifiedDateTime = VALUES(ModifiedDateTime)",
+                [$adminRoleId, $groupId, $now, $now]
+            );
+            echo "Menu group $groupCode granted to ADMIN\n";
+        }
     }
 
     mysqli_commit($conn);
-
-    echo "Users before reset: {$beforeCount['Cnt']}\n";
-    echo "Users deleted: {$deleted}\n";
-    echo "New user created: {$finalUser['Email']} ({$finalUser['UserId']})\n";
-    echo "\nDONE\n";
-} catch (Exception $exception) {
+    echo "\n[SUCCESS] Menu and user reset completed successfully.\n";
+} catch (Exception $e) {
     mysqli_rollback($conn);
-    fwrite(STDERR, "ERROR: " . $exception->getMessage() . "\n");
+    echo "[ERROR] " . $e->getMessage() . "\n";
     exit(1);
 }

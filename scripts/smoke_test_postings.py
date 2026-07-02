@@ -1,9 +1,14 @@
 import requests
+import os
 from datetime import datetime
+from dotenv import load_dotenv
 
-BASE_URL = "http://127.0.0.1:8080"
-LOGIN_EMAIL = "admin@caspti.local"
-LOGIN_PASSWORD = "Admin@123"
+# Carregar variáveis de ambiente do arquivo .env
+load_dotenv()
+
+BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:8080")
+LOGIN_EMAIL = os.getenv("SMOKE_TEST_EMAIL", "admin@admin")
+LOGIN_PASSWORD = os.getenv("SMOKE_TEST_PASSWORD", "admin")
 
 
 def api_get(session, path):

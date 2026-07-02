@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:5.7
+    container_name: erpmini_db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-changeme}
+      MYSQL_DATABASE: erpminiprod
+      MYSQL_USER: erpminiprod
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-changeme}
+    ports:
+      - "3307:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+  web:
+    build: .
+    container_name: erpmini_web
+    restart: always
+    ports:
+      - "8080:80"
+    environment:
+      MINIERP_DB_HOST: db
+      MINIERP_DB_PORT: 3306
+      MINIERP_DB_NAME: erpminiprod
+      MINIERP_DB_USER: erpminiprod
+      MINIERP_DB_PASSWORD: ${MYSQL_PASSWORD:-changeme}
+      MINIERP_OAUTH_SECRET: ${MINIERP_OAUTH_SECRET:-CHANGE_ME}
+      MINIERP_OAUTH_CREDENTIAL_KEY: ${MINIERP_OAUTH_CREDENTIAL_KEY:-CHANGE_ME}
+    depends_on:
+      - db
+
+volumes:
+  db_data:
